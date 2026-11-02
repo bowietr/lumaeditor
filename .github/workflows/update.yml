@@ -1,0 +1,139 @@
+name: Update from ZIP
+
+on:
+  push:
+    branches: [main]
+    paths: [update.zip]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: luma-zip-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Validate and apply update.zip
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os, shutil, stat, tempfile, zipfile
+          from pathlib import Path, PurePosixPath
+
+          root = Path.cwd().resolve()
+          archive = root / "update.zip"
+          if not archive.is_file():
+              raise SystemExit("Repo kökünde update.zip bulunamadı.")
+
+          with tempfile.TemporaryDirectory() as tmp:
+              staging = Path(tmp)
+              with zipfile.ZipFile(archive) as z:
+                  entries = []
+                  total = 0
+
+                  for item in z.infolist():
+                      name = item.filename
+                      if "\\" in name or "\x00" in name:
+                          raise SystemExit("Geçersiz ZIP yolu")
+
+                      path = PurePosixPath(name)
+                      if path.is_absolute() or ".." in path.parts or any(":" in p for p in path.parts):
+                          raise SystemExit("Güvenli olmayan ZIP yolu")
+
+                      mode = item.external_attr >> 16
+                      if stat.S_ISLNK(mode):
+                          raise SystemExit("Sembolik bağlantı desteklenmiyor")
+
+                      if item.is_dir() or not path.parts:
+                          continue
+                      if "__MACOSX" in path.parts or path.name == ".DS_Store":
+                          continue
+
+                      total += item.file_size
+                      entries.append((item, path))
+
+                  if not entries or len(entries) > 5000 or total > 100 * 1024 * 1024:
+                      raise SystemExit("ZIP boş veya sınırları aşıyor: 5000 dosya / 100 MB")
+
+                  # Tek proje klasörünü kaldır; web klasörlerini koru.
+                  first = {p.parts[0] for _, p in entries}
+                  strip = len(first) == 1 and all(len(p.parts) > 1 for _, p in entries)
+                  if strip and next(iter(first)) in {
+                      "dist", "src", "public", "assets",
+                      ".github", ".git", ".openai"
+                  }:
+                      strip = False
+
+                  seen = set()
+                  for item, path in entries:
+                      parts = path.parts[1:] if strip else path.parts
+
+                      if any(p in {
+                          ".git", ".github", ".openai",
+                          "node_modules", ".venv"
+                      } for p in parts):
+                          raise SystemExit("ZIP korunan bir klasör içeriyor: " + str(path))
+
+                      if any(p == ".env" or p.startswith(".env.") for p in parts) or parts == ("update.zip",):
+                          raise SystemExit("ZIP korunan bir dosya içeriyor: " + str(path))
+
+                      rel = Path(*parts)
+                      if rel in seen:
+                          raise SystemExit("Tekrarlanan dosya yolu: " + str(rel))
+                      seen.add(rel)
+
+                      target = root / rel
+                      for parent in [target, *target.parents]:
+                          if parent == root:
+                              break
+                          if parent.is_symlink():
+                              raise SystemExit("Hedefte sembolik bağlantı var")
+
+                      dest = staging / rel
+                      dest.parent.mkdir(parents=True, exist_ok=True)
+                      with z.open(item) as src, dest.open("wb") as dst:
+                          shutil.copyfileobj(src, dst)
+
+              # Önce tüm hedefleri doğrula.
+              for rel in seen:
+                  target = root / rel
+                  if target.exists() and not target.is_file():
+                      raise SystemExit("Hedef dosya değil: " + str(rel))
+                  if any(p.exists() and not p.is_dir() for p in target.parents if p != root):
+                      raise SystemExit("Hedef klasör çakışması: " + str(rel))
+
+              # ZIP dışında kalan dosyaları silmeden güncelle.
+              for rel in sorted(seen):
+                  target = root / rel
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(staging / rel, target)
+                  os.chmod(target, 0o644)
+
+              print(f"{len(seen)} dosya güncellendi.")
+          PYTHON
+
+      - name: Commit updated files
+        shell: bash
+        run: |
+          git add --all -- . ':!update.zip' ':!.github' ':!.openai'
+
+          if git diff --cached --quiet; then
+            echo "Dosyalar zaten güncel."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Apply update.zip"
+          git push origin HEAD:main
