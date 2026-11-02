@@ -1,13 +1,9 @@
-# Luma Studio
+# Luma Studio v0.2
 
-Tarayıcıda çalışan fotoğraf editörü. Kurulum veya derleme gerekmez.
+Tarayıcıda fotoğraf editörü. index.html dosyasını açın veya statik hosting ile yayınlayın.
 
-## Kullanım
+Açılır kapanır ayar bölümleri, otomatik iyileştirme, histogram, ışık ve renk, netlik, keskinlik, gren, hazır görünümler, kırpma ve JPEG/PNG/WebP dışa aktarma. Çıktı uzun kenarı ve kalite ayarlanabilir.
 
-index.html dosyasını tarayıcıda açın veya statik web sunucusunda yayınlayın.
+Fotoğraflar cihazda işlenir. En fazla 4096 piksel uzun kenar; RAW/PSD desteği yoktur.
 
-## Güncelleme
-
-Bu update.zip dosyasını reponun ana dizinine yükleyin. Update from ZIP Action dosyaları otomatik uygular.
-
-Fotoğraflar cihazda işlenir. Uzun kenar en fazla 4096 piksel olarak işlenir. RAW ve PSD desteği yoktur.
+Güncelleme: update.zip dosyasını repo köküne yükleyin. Update from ZIP workflow dosyaları uygular.
